@@ -1,0 +1,4 @@
+#This is a comment line, should be ignored
+stage 1
+num_nodes 2
+nonce 23479435
