@@ -42,7 +42,7 @@ ssize_t read_line(FILE *file, char* buff, size_t size) {
 void write_to_file(FILE* fp, char* buff) {
 	if (fp != NULL) {
 		int r_code = fputs(buff, fp);
-
+		fprintf(fp,"\n");
 		if (r_code == EOF) {
 			perror("Error writing data to file!!\n");
 		}

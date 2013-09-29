@@ -21,6 +21,10 @@
 #include <sys/wait.h>
 #include <signal.h>
 
-int
+int create_tcp_socket();
+
+void populate_sockaddr_in(struct sockaddr_in *sk_address,const char* address,int port);
+
+int bind_address(int tcp_sock_fd, struct sockaddr_in tcp_sender);
 
 #endif /* SOCK_OP_H_ */
