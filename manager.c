@@ -68,21 +68,16 @@ int readshm(char *segptr, char *s) {
 
 void do_client() {
 	//printf("I am child process!!\n");
-	int shmid;
+	int shmid, server_port = 0;
 	key_t key;
 	char *shm, s[SEGSIZE], buffer[MAXSIZE];
-	memset(buffer,0,sizeof(buffer));
+	memset(buffer, 0, sizeof(buffer));
 
 	int pid = getpid(); // to be sent to the server.
 
 	//set up TCP connection
 	struct sockaddr_in tcp_server;
 	int tcp_client_sock_fd = create_tcp_socket();
-	/*populate_sockaddr_in(&tcp_client, "localhost", 0);
-	 if (bind_address(tcp_client_sock_fd, tcp_client) < 0) {
-	 perror("Error biding the address to socket. Exiting!!");
-	 exit(0);
-	 }*/
 
 	//populate the server addr structure
 	//first wait till the process read the server port information
@@ -105,22 +100,25 @@ void do_client() {
 		exit(1);
 	}
 
-	while (readshm(shm, s))
-		;
 	// --END
-
-	populate_sockaddr_in(&tcp_server, "localhost", atoi(s));
-	printf("do_client(): server port number read from shared memory is: %s\n",s);
 
 	//connect to the server
 	while (connect(tcp_client_sock_fd, (struct sockaddr *) &tcp_server,
-			sizeof(tcp_server)) < 0);
-
-	if (read(tcp_client_sock_fd, buffer, MAXSIZE-1)<0) {
-	        perror("recv");
+			sizeof(tcp_server)) < 0) {
+		readshm(shm, s);
+		printf(
+				"do_client(): server port number read from shared memory is: %s\n",
+				s);
+		printf("do_client(): trying to connect the server\n");
+		server_port = atoi(s);
+		populate_sockaddr_in(&tcp_server, "localhost", server_port);
 	}
 
-	printf("do_client: data received from server: %s\n",buffer);
+	if (read(tcp_client_sock_fd, buffer, MAXSIZE - 1) < 0) {
+		perror("recv");
+	}
+
+	printf("do_client: data received from server: %s\n", buffer);
 	//perror("ERROR connecting");
 
 	close(tcp_client_sock_fd);
@@ -139,51 +137,6 @@ int main(int argc, char *argv[]) {
 
 	//1. read the input parameter file
 	read_input_file(filename);
-
-	//2. fork N child processes
-	int i = 0;
-	//char temp[10];
-	while (i < a[1]) {
-		if (fork() == 0) {
-			do_client();
-			exit(0);
-		}
-
-		i++;
-	}
-
-	//open file in output stream
-	FILE* out_file_stream = open_file(output_filename, "w");
-	/*memset(output, 0, sizeof(output));
-	strcat(output, "stage 1");
-	write_to_file(out_file_stream, output);*/
-	fprintf(out_file_stream,"stage 1\n");
-
-	//wait(0);
-	//3. set up TCP server at manager
-	struct sockaddr_in tcp_server, tmp, tcp_client;
-	int tcp_serv_sock_fd = create_tcp_socket();
-	populate_sockaddr_in(&tcp_server, "localhost", 0);
-	if (bind_address(tcp_serv_sock_fd, tcp_server) < 0) {
-		perror("Error biding the address to socket. Exiting!!");
-		exit(0);
-	}
-
-	//get the port number information
-	socklen_t size = sizeof(tmp);
-	if (getsockname(tcp_serv_sock_fd, (struct sockaddr *) &tmp, &size) < 0) {
-		perror("Error getting port number information!!");
-		exit(0);
-	} else {
-		/*memset(output, 0, sizeof(output));
-		memset(temp, 0, sizeof(temp));
-		strcat(output, "manager port: ");
-		sprintf(temp, "%d", ntohs(tmp.sin_port));
-		strcat(output, temp);
-		write_to_file(out_file_stream, output);*/
-
-		fprintf(out_file_stream, "manager port: %u\n", ntohs(tmp.sin_port));
-	}
 
 	//4. Create shared memory area with the child processes.
 	// REUSED CODE :- http://www.tldp.org/LDP/lpg/node81.html
@@ -206,9 +159,44 @@ int main(int argc, char *argv[]) {
 
 	//--END
 
+	//2. fork N child processes
+	int i = 0;
+	//char temp[10];
+	while (i < a[1]) {
+		if (fork() == 0) {
+			do_client();
+			exit(0);
+		}
+
+		i++;
+	}
+
+	//open file in output stream
+	FILE* out_file_stream = open_file(output_filename, "w");
+	fprintf(out_file_stream, "stage 1\n");
+
+	//wait(0);
+	//3. set up TCP server at manager
+	struct sockaddr_in tcp_server, tmp, tcp_client;
+	int tcp_serv_sock_fd = create_tcp_socket();
+	populate_sockaddr_in(&tcp_server, "localhost", 0);
+	if (bind_address(tcp_serv_sock_fd, tcp_server) < 0) {
+		perror("Error biding the address to socket. Exiting!!");
+		exit(0);
+	}
+
+	//get the port number information
+	socklen_t size = sizeof(tmp);
+	if (getsockname(tcp_serv_sock_fd, (struct sockaddr *) &tmp, &size) < 0) {
+		perror("Error getting port number information!!");
+		exit(0);
+	} else {
+		fprintf(out_file_stream, "manager port: %u\n", ntohs(tmp.sin_port));
+	}
+
 	//5. Put manager's port # in shared memory so that child processes and use it to connect the manager (server) socket
 	//writeshm(segptr, temp);
-	sprintf(segptr,"%u",ntohs(tmp.sin_port));
+	sprintf(segptr, "%u", ntohs(tmp.sin_port));
 
 	//listen for incomming connections
 	listen(tcp_serv_sock_fd, 5);
@@ -227,8 +215,8 @@ int main(int argc, char *argv[]) {
 				tcp_client.sin_port);
 
 		//send nounce to the client
-		if(write(client_sock_fd, "hello!!", 8)<0)
-				perror("Error in sending data to client\n");
+		if (write(client_sock_fd, "hello!!", 8) < 0)
+			perror("Error in sending data to client\n");
 
 		close(client_sock_fd);
 		client++;
