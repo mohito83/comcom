@@ -18,7 +18,7 @@
  * a[1]: # of clients
  * a[2]: nounce
  */
-int a[3];
+long a[3];
 const char* output_filename = "stage1.manager.out";
 /*
  * For shared memory
@@ -69,6 +69,7 @@ int readshm(char *segptr, char *s) {
 void do_client() {
 	//printf("I am child process!!\n");
 	int shmid, server_port = 0;
+	long nounce = 0;
 	key_t key;
 	char *shm, s[SEGSIZE], buffer[MAXSIZE];
 	memset(buffer, 0, sizeof(buffer));
@@ -77,6 +78,7 @@ void do_client() {
 
 	//set up TCP connection
 	struct sockaddr_in tcp_server;
+	memset(&tcp_server,0,sizeof(tcp_server));
 	int tcp_client_sock_fd = create_tcp_socket();
 
 	//populate the server addr structure
@@ -103,8 +105,7 @@ void do_client() {
 	// --END
 
 	//connect to the server
-	while (connect(tcp_client_sock_fd, (struct sockaddr *) &tcp_server,
-			sizeof(tcp_server)) < 0) {
+	do {
 		readshm(shm, s);
 		printf(
 				"do_client(): server port number read from shared memory is: %s\n",
@@ -112,13 +113,26 @@ void do_client() {
 		printf("do_client(): trying to connect the server\n");
 		server_port = atoi(s);
 		populate_sockaddr_in(&tcp_server, "localhost", server_port);
+	} while (connect(tcp_client_sock_fd, (struct sockaddr *) &tcp_server,
+			sizeof(tcp_server)) < 0);
+
+	if (recv(tcp_client_sock_fd, buffer, MAXSIZE - 1,0) < 0) {
+		perror("Error in receiving data for server");
 	}
 
-	if (read(tcp_client_sock_fd, buffer, MAXSIZE - 1) < 0) {
-		perror("recv");
+	nounce = atol(buffer);
+	printf("do_client: data received from server: %ld\n", nounce);
+	nounce += pid;
+	printf("do_client: computed nounce is: %ld\n", nounce);
+
+	//send this information to the server
+	memset(buffer,0,sizeof(buffer));
+	sprintf(buffer, "%ld %d\n", nounce, pid);
+	printf("do_client: data to send to manager: %s\n",buffer);
+	if (send(tcp_client_sock_fd, buffer, MAXSIZE - 1,0) < 0) {
+		perror("Error sending data to server");
 	}
 
-	printf("do_client: data received from server: %s\n", buffer);
 	//perror("ERROR connecting");
 
 	close(tcp_client_sock_fd);
@@ -161,7 +175,7 @@ int main(int argc, char *argv[]) {
 
 	//2. fork N child processes
 	int i = 0;
-	//char temp[10];
+	char temp[64];
 	while (i < a[1]) {
 		if (fork() == 0) {
 			do_client();
@@ -173,7 +187,7 @@ int main(int argc, char *argv[]) {
 
 	//open file in output stream
 	FILE* out_file_stream = open_file(output_filename, "w");
-	fprintf(out_file_stream, "stage 1\n");
+	//fprintf(out_file_stream, "stage 1\n");
 
 	//wait(0);
 	//3. set up TCP server at manager
@@ -197,6 +211,7 @@ int main(int argc, char *argv[]) {
 	//5. Put manager's port # in shared memory so that child processes and use it to connect the manager (server) socket
 	//writeshm(segptr, temp);
 	sprintf(segptr, "%u", ntohs(tmp.sin_port));
+	printf("manager: data set in shared memory is: %s\n",segptr);
 
 	//listen for incomming connections
 	listen(tcp_serv_sock_fd, 5);
@@ -211,27 +226,34 @@ int main(int argc, char *argv[]) {
 		if (client_sock_fd < 0)
 			perror("ERROR on accept");
 
+		//6. Do data transfer and log it in the log file.
 		fprintf(out_file_stream, "client %d port: %u\n", client,
 				tcp_client.sin_port);
 
 		//send nounce to the client
-		if (write(client_sock_fd, "hello!!", 8) < 0)
-			perror("Error in sending data to client\n");
+		printf("manager: nounce is: %ld\n", a[2]);
+		sprintf(temp, "%ld", a[2]);
+		if (send(client_sock_fd, temp, sizeof(temp),0) < 0)
+			perror("Error in sending data to client");
 
+		//wait to receive reply from the clients
+		if (recv(client_sock_fd, temp, sizeof(temp),0) < 0)
+			perror("Error in receiving data from client");
+
+		printf("manager: data received at the server: %s\n",temp);
+
+		//client 1 says: 23504148 24713
+		fprintf(out_file_stream,"client %d says: %s",client,temp);
 		close(client_sock_fd);
 		client++;
 		i++;
 	}
-
-	//6. Do data transfer and log it in the log file.
 
 	//removing shared memory area
 	shmctl(shmid, IPC_RMID, 0);
 
 	//close server socket before exiting the application
 	close(tcp_serv_sock_fd);
-
-	//printf("Array value are a[0]=%ld, a[1]=%ld, a[2]=%ld\n",a[0],a[1],a[2]);
 
 	return 0;
 }
