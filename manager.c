@@ -11,13 +11,14 @@
 #include <sys/ipc.h>
 
 #define SEGSIZE 10
+#define MAXSIZE 256
 
 /**
  * a[0]: stage #
  * a[1]: # of clients
  * a[2]: nounce
  */
-long a[3];
+int a[3];
 const char* output_filename = "stage1.manager.out";
 /*
  * For shared memory
@@ -69,18 +70,19 @@ void do_client() {
 	//printf("I am child process!!\n");
 	int shmid;
 	key_t key;
-	char *shm, s[SEGSIZE];
+	char *shm, s[SEGSIZE], buffer[MAXSIZE];
+	memset(buffer,0,sizeof(buffer));
 
 	int pid = getpid(); // to be sent to the server.
 
 	//set up TCP connection
-	struct sockaddr_in tcp_client, tcp_server;
+	struct sockaddr_in tcp_server;
 	int tcp_client_sock_fd = create_tcp_socket();
 	/*populate_sockaddr_in(&tcp_client, "localhost", 0);
-	if (bind_address(tcp_client_sock_fd, tcp_client) < 0) {
-		perror("Error biding the address to socket. Exiting!!");
-		exit(0);
-	}*/
+	 if (bind_address(tcp_client_sock_fd, tcp_client) < 0) {
+	 perror("Error biding the address to socket. Exiting!!");
+	 exit(0);
+	 }*/
 
 	//populate the server addr structure
 	//first wait till the process read the server port information
@@ -107,14 +109,18 @@ void do_client() {
 		;
 	// --END
 
-	printf("do_client(): populating server sockaddr structure!!");
-	populate_sockaddr_in(&tcp_server, "localhost", atoi(shm));
+	populate_sockaddr_in(&tcp_server, "localhost", atoi(s));
+	printf("do_client(): server port number read from shared memory is: %s\n",s);
 
 	//connect to the server
 	while (connect(tcp_client_sock_fd, (struct sockaddr *) &tcp_server,
-			sizeof(tcp_server)) < 0){
-		printf("trying to connect to server!!");
+			sizeof(tcp_server)) < 0);
+
+	if (read(tcp_client_sock_fd, buffer, MAXSIZE-1)<0) {
+	        perror("recv");
 	}
+
+	printf("do_client: data received from server: %s\n",buffer);
 	//perror("ERROR connecting");
 
 	close(tcp_client_sock_fd);
@@ -129,17 +135,16 @@ int main(int argc, char *argv[]) {
 	}
 
 	char *filename = argv[1];
-	char output[256];
+	//char output[256];
 
 	//1. read the input parameter file
 	read_input_file(filename);
 
 	//2. fork N child processes
 	int i = 0;
-	char temp[10];
+	//char temp[10];
 	while (i < a[1]) {
 		if (fork() == 0) {
-			//TODO child functionality
 			do_client();
 			exit(0);
 		}
@@ -149,9 +154,10 @@ int main(int argc, char *argv[]) {
 
 	//open file in output stream
 	FILE* out_file_stream = open_file(output_filename, "w");
-	memset(output, 0, sizeof(output));
+	/*memset(output, 0, sizeof(output));
 	strcat(output, "stage 1");
-	write_to_file(out_file_stream, output);
+	write_to_file(out_file_stream, output);*/
+	fprintf(out_file_stream,"stage 1\n");
 
 	//wait(0);
 	//3. set up TCP server at manager
@@ -169,12 +175,14 @@ int main(int argc, char *argv[]) {
 		perror("Error getting port number information!!");
 		exit(0);
 	} else {
-		memset(output, 0, sizeof(output));
+		/*memset(output, 0, sizeof(output));
 		memset(temp, 0, sizeof(temp));
 		strcat(output, "manager port: ");
 		sprintf(temp, "%d", ntohs(tmp.sin_port));
 		strcat(output, temp);
-		write_to_file(out_file_stream, output);
+		write_to_file(out_file_stream, output);*/
+
+		fprintf(out_file_stream, "manager port: %u\n", ntohs(tmp.sin_port));
 	}
 
 	//4. Create shared memory area with the child processes.
@@ -199,25 +207,32 @@ int main(int argc, char *argv[]) {
 	//--END
 
 	//5. Put manager's port # in shared memory so that child processes and use it to connect the manager (server) socket
-	writeshm(segptr, temp);
+	//writeshm(segptr, temp);
+	sprintf(segptr,"%u",ntohs(tmp.sin_port));
 
 	//listen for incomming connections
 	listen(tcp_serv_sock_fd, 5);
 
 	int client_sock_fd, client = 1;
 	socklen_t tcp_client_addr_len = sizeof(tcp_client);
-	while (1) {
-		printf("server:: waiting for connection!!");
+	i = 0;
+	while (i < a[1]) {
+		printf("server:: waiting for connection!!\n");
 		client_sock_fd = accept(tcp_serv_sock_fd,
 				(struct sockaddr *) &tcp_client, &tcp_client_addr_len);
 		if (client_sock_fd < 0)
 			perror("ERROR on accept");
 
-		fprintf(out_file_stream, "client %d port: %ud\n", client,
+		fprintf(out_file_stream, "client %d port: %u\n", client,
 				tcp_client.sin_port);
+
+		//send nounce to the client
+		if(write(client_sock_fd, "hello!!", 8)<0)
+				perror("Error in sending data to client\n");
 
 		close(client_sock_fd);
 		client++;
+		i++;
 	}
 
 	//6. Do data transfer and log it in the log file.
